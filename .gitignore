@@ -1,4 +1,4 @@
 athena-bot/
 __pycache__/
-.streamlit/
 .env/
+.streamlit/secrets.toml/
