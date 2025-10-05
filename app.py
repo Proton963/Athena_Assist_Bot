@@ -7,10 +7,13 @@ from dotenv import load_dotenv
 from pathlib import Path
 from modules.llm_handler import get_intelligent_response, get_available_models
 import base64
+import sys
 
 # Load environment variables from project .env explicitly
 dotenv_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path)
+
+sys.path.insert(0, str(Path(__file__).parent))
 
 # --- Page Configuration ---
 st.set_page_config(
