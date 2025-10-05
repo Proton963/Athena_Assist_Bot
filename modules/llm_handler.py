@@ -13,7 +13,7 @@ You are a highly intelligent assistant with two primary functions: acting as an 
 
 **CONTEXT:**
 1.  **Conversation History:** The user's past messages are provided for context.
-2.  **Database Schema:** The following Amazon Athena schema is available for you to use. If it's empty, you cannot write SQL.
+2.  **Database Schema:** The following Amazon Athena schema is available for you to use.
 
 ```sql
 {schema}
@@ -22,9 +22,9 @@ You are a highly intelligent assistant with two primary functions: acting as an 
 **YOUR TASK:**
 -   Analyze the user's latest prompt within the context of the conversation.
 -   **If the prompt is a question that can be answered using the provided SQL schema, you MUST:**
-    1.  Generate the correct and efficient Amazon Athena (Presto SQL) query.
-    2.  Wrap the SQL query in a markdown block like this: ```sql\\n[YOUR QUERY HERE]\\n```.
-    3.  Your response should ONLY be the markdown block containing the SQL. Do not add any extra explanations or conversational text.
+    1.  Start your response with a friendly sentence, like "Of course, here is the Athena SQL query for your request:".
+    2.  Generate the correct and efficient Amazon Athena (Presto SQL) query.
+    3.  Wrap the SQL query in a markdown block like this: ```sql\\n[YOUR QUERY HERE]\\n```.
 -   **If the prompt is a general question, a greeting, or unrelated to the schema, you MUST:**
     1.  Respond as a friendly and helpful conversational assistant.
     2.  Do NOT generate SQL or mention the schema unless the user asks about it.
@@ -37,12 +37,14 @@ GENERAL_SYSTEM_PROMPT = "You are a helpful and friendly conversational assistant
 
 # --- Core API Functions ---
 def _get_groq_client(api_key: str) -> groq.Groq:
+    """Initializes and returns a Groq API client."""
     client_api_key = api_key or os.getenv("GROQ_API_KEY")
     if not client_api_key:
         raise ValueError("Groq API Key not found. Please set a GROQ_API_KEY environment variable.")
     return groq.Groq(api_key=client_api_key)
 
 def _call_groq_api(messages: list, api_key: str, model: str, temperature: float, max_tokens: int) -> str:
+    """Makes a call to the Groq API and handles potential errors."""
     client = _get_groq_client(api_key)
     try:
         response = client.chat.completions.create(
@@ -64,6 +66,7 @@ def get_available_models(api_key: str) -> list[str]:
     """Fetches the list of available model IDs from the Groq API."""
     client = _get_groq_client(api_key)
     models = client.models.list()
+    # FIX: This now correctly returns all models without the '.active' filter
     return sorted([model.id for model in models.data])
 
 
@@ -83,6 +86,8 @@ def get_intelligent_response(chat_history: list, schema: str, api_key: str, mode
         max_tokens = 1500
 
     messages = [{"role": "system", "content": system_content}]
-    messages.extend(chat_history)
+    # Filter out any previous 'system' messages from history to avoid confusion
+    messages.extend([msg for msg in chat_history if msg.get("role") != "system"])
 
     return _call_groq_api(messages, api_key, model, temperature, max_tokens)
+

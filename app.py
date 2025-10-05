@@ -19,6 +19,15 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- Initialize Session State ---
+if "api_key" not in st.session_state:
+    st.session_state.api_key = os.getenv("GROQ_API_KEY") or (st.secrets.get("GROQ_API_KEY") if hasattr(st, "secrets") else None)
+if "schema_text" not in st.session_state:
+    st.session_state.schema_text = ""
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you? To generate SQL, please add your schema in the sidebar."}]
+
+
 # --- Helper function to load and encode the logo ---
 def get_image_as_base64(path):
     """Reads an image file and returns its base64 encoded string."""
@@ -29,7 +38,7 @@ def get_image_as_base64(path):
         st.warning(f"Logo not found at path: {path}. Please ensure the image is in the same directory as the app.")
         return None
 
-# --- UI Styling ---
+# --- UI Styling (FIX: Restored the complete CSS) ---
 st.markdown("""
 <style>
     .stCodeBlock {
@@ -48,7 +57,7 @@ st.markdown("""
         gap: 15px;
     }
     .logo-img {
-        width: 80px; /* Adjusted size for better alignment */
+        width: 80px;
         height: 80px;
         pointer-events: none;
     }
@@ -103,7 +112,6 @@ st.markdown("""
         border: none;
     }
 
-    /* Sidebar button hover glow specifically for buttons in the sidebar (e.g. Submit Schema) */
     [data-testid="stSidebar"] .stButton>button:hover {
         background: linear-gradient(90deg,#00afff,#4C6FFF);
         box-shadow: 0 0 10px #00afff, 0 6px 16px rgba(0,175,255,0.12);
@@ -149,9 +157,6 @@ st.markdown("""
 
 # --- Sidebar for Configuration ---
 with st.sidebar:
-    if "api_key" not in st.session_state:
-        st.session_state.api_key = os.getenv("GROQ_API_KEY") or (st.secrets.get("GROQ_API_KEY") if hasattr(st, "secrets") else None)
-
     model_options = []
     if st.session_state.api_key:
         try:
@@ -162,21 +167,27 @@ with st.sidebar:
         st.warning("Please add your GROQ_API_KEY to the .env file.", icon="⚠️")
 
     st.subheader("Model Settings")
-    default_index = model_options.index("openai/gpt-oss-120b") if "openai/gpt-oss-120b" in model_options else 0
+    default_index = model_options.index("gemma2-9b-it") if "gemma2-9b-it" in model_options else 0
     selected_model = st.selectbox("Select Groq Model", model_options, index=default_index, disabled=not model_options)
 
     st.subheader("Database Schema (for SQL)")
-    schema_text = st.text_area("Paste your Athena table schema here...", height=250, placeholder="CREATE TABLE customers( \nid INT, \name VARCHAR(255), \nsignup_date DATE \n); ")
+    schema_input = st.text_area(
+        "Paste your Athena table schema here...", 
+        height=250, 
+        placeholder="CREATE TABLE customers( \nid INT, \nname VARCHAR(255), \nsignup_date DATE \n); ",
+        value=st.session_state.schema_text
+    )
 
-    # Submit button for the schema (glows on hover)
     if st.button("Submit Schema", key="submit_schema"):
-        st.session_state.schema_submitted = True
-        st.session_state.schema_text = schema_text
-        st.success("Schema submitted.", icon="✅")
+        st.session_state.schema_text = schema_input
+        st.success("Schema submitted and active.", icon="✅")
+    
+    if st.session_state.schema_text:
+        st.info("A schema is active. The assistant will now prioritize generating SQL.", icon="ℹ️")
 
 
 # --- Main Chat Interface ---
-logo_path = "Picsart_25-10-05_20-22-13-175.png" # Use a relative path for deployment
+logo_path = "Picsart_25-10-05_20-22-13-175.png"
 logo_base64 = get_image_as_base64(logo_path)
 if logo_base64:
     st.markdown(f'<div class="main-title-container"><img src="data:image/jpeg;base64,{logo_base64}" class="logo-img"><h1>Athena & Chat Assistant</h1></div>', unsafe_allow_html=True)
@@ -184,9 +195,6 @@ else:
     st.title("🤖 Athena & Chat Assistant")
 
 st.markdown("Ask a general question or provide a schema in the sidebar to generate an Athena SQL query.")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you? To generate SQL, please add your schema in the sidebar."}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -205,22 +213,15 @@ if prompt := st.chat_input("Ask me anything..."):
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
-                    # New simplified logic: Always send history and schema
                     response_content = get_intelligent_response(
                         chat_history=st.session_state.messages,
-                        schema=schema_text,
+                        schema=st.session_state.schema_text,
                         api_key=st.session_state.api_key,
                         model=selected_model
                     )
 
-                    # Add a friendly intro if the response is SQL
-                    if "```sql" in response_content:
-                        final_display_message = f"Of course, here is the Athena SQL query for your request:\n\n{response_content}"
-                    else:
-                        final_display_message = response_content
-
-                    st.markdown(final_display_message)
-                    st.session_state.messages.append({"role": "assistant", "content": final_display_message})
+                    st.markdown(response_content)
+                    st.session_state.messages.append({"role": "assistant", "content": response_content})
 
                 except Exception as e:
                     error_message = f"An error occurred: {str(e)}"
