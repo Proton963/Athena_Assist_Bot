@@ -5,43 +5,31 @@ import streamlit as st
 import os
 from dotenv import load_dotenv
 from pathlib import Path
-from modules.llm_handler import get_intelligent_response, get_available_models
+from modules.llm_handler import get_available_models
+from modules.rag_handler import RAGHandler
 import base64
-import sys
 
 # Load environment variables from project .env explicitly
 dotenv_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path)
 
-sys.path.insert(0, str(Path(__file__).parent))
-
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Athena & Chat Assistant",
+    page_title="Athena RAG Assistant",
     page_icon="🤖",
     layout="wide"
 )
 
-# --- Initialize Session State ---
-if "api_key" not in st.session_state:
-    st.session_state.api_key = os.getenv("GROQ_API_KEY") or (st.secrets.get("GROQ_API_KEY") if hasattr(st, "secrets") else None)
-if "schema_text" not in st.session_state:
-    st.session_state.schema_text = ""
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you? To generate SQL, please add your schema in the sidebar."}]
-
-
 # --- Helper function to load and encode the logo ---
 def get_image_as_base64(path):
-    """Reads an image file and returns its base64 encoded string."""
     try:
         with open(path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode()
     except FileNotFoundError:
-        st.warning(f"Logo not found at path: {path}. Please ensure the image is in the same directory as the app.")
+        st.warning(f"Logo not found at path: {path}.")
         return None
 
-# --- UI Styling (FIX: Restored the complete CSS) ---
+# --- UI Styling (Full CSS) ---
 st.markdown("""
 <style>
     .stCodeBlock {
@@ -114,17 +102,15 @@ st.markdown("""
         color: #fff;
         border: none;
     }
-
     [data-testid="stSidebar"] .stButton>button:hover {
-        background: linear-gradient(90deg,#00afff,#4C6FFF);
+        background: #232323;
         box-shadow: 0 0 10px #00afff, 0 6px 16px rgba(0,175,255,0.12);
         transition: box-shadow 180ms ease, transform 120ms ease;
     }
-
     [data-testid="stSidebar"] .stSelectbox,
     [data-testid="stSidebar"] .stMarkdown,
     [data-testid="stSidebar"] .stInfo,
-    [data-testid="stSidebar"] .stTextArea {
+    [data-testid="stSidebar"] .stFileUploader {
         background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
         border-radius: 16px;
         padding: 10px 12px;
@@ -132,34 +118,56 @@ st.markdown("""
         box-shadow: 0 4px 8px rgba(0,0,0,0.6), 0 2px 0 rgba(255,255,255,0.02) inset;
         margin-bottom: 10px;
     }
+    
+    [data-testid="stSidebar"] .stTextArea {
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+        border-radius: 20px;
+        padding: 10px 10px;
+        border: 1px solid rgba(255,255,255,0.04);
+        box-shadow: 0 4px 4px rgba(0,0,0,0.6), 0 2px 0 rgba(255,255,255,0.02) inset;
+        margin-bottom: 10px;
+    }
+    
     [data-testid="stSidebar"] .stSelectbox:focus-within,
     [data-testid="stSidebar"] .stInfo:focus-within,
-    [data-testid="stSidebar"] .stTextArea:focus-within {
+    [data-testid="stSidebar"] .stFileUploader:focus-within {
         box-shadow: 0 4px 8px rgba(0,0,0,0.65), 0 2px 20px rgba(0,175,255,0.18);
     }
-    [data-testid="stSidebar"] .stTextArea textarea,
-    [data-testid="stSidebar"] .stSelectbox select,
-    [data-testid="stSidebar"] div[role="textbox"] {
-        background: transparent !important;
-        color: #E6EEF8;
-        border: none;
-        outline: none;
-        resize: vertical;
+    [data-testid="stSidebar"] .stTextArea:focus-within {
+        box-shadow: 0 4px 4px rgba(0,0,0,0.65), 0 2px 6px rgba(0,175,255,0.18);
     }
+    
     [data-testid="stSidebar"] label,
     [data-testid="stSidebar"] .stMarkdown p {
         color: #E6EEF8;
     }
-    [data-testid="stSidebar"] .stSelectbox,
-    [data-testid="stSidebar"] .stTextArea {
-        width: 100%;
-    }
 </style>
 """, unsafe_allow_html=True)
 
+# --- Helper function to process schema from file or text ---
+def process_schema(content, is_file=False):
+    """Initializes RAG handler and processes schema from file or text."""
+    with st.spinner("Processing schema... This may take a moment."):
+        try:
+            st.session_state.rag_handler = RAGHandler(
+                api_key=st.session_state.api_key,
+                model=st.session_state.selected_model
+            )
+            if is_file:
+                st.session_state.rag_handler.setup_rag_from_file(content)
+            else:
+                st.session_state.rag_handler.setup_rag_from_text(content)
+            st.success("Successfully processed schema.", icon="✅")
+        except Exception as e:
+            st.error(f"Error processing schema: {e}", icon="🚫")
+            if "rag_handler" in st.session_state:
+                del st.session_state.rag_handler
 
 # --- Sidebar for Configuration ---
 with st.sidebar:
+    if "api_key" not in st.session_state:
+        st.session_state.api_key = os.getenv("GROQ_API_KEY") or (st.secrets.get("GROQ_API_KEY") if hasattr(st, "secrets") else None)
+
     model_options = []
     if st.session_state.api_key:
         try:
@@ -169,60 +177,74 @@ with st.sidebar:
     else:
         st.warning("Please add your GROQ_API_KEY to the .env file.", icon="⚠️")
 
-    st.subheader("Model Settings")
-    default_index = model_options.index("gemma2-9b-it") if "gemma2-9b-it" in model_options else 0
-    selected_model = st.selectbox("Select Groq Model", model_options, index=default_index, disabled=not model_options)
+    st.subheader("⚙️ Model Settings")
+    st.session_state.selected_model = st.selectbox("Select Groq Model", model_options, index=model_options.index("openai/gpt-oss-120b") if "openai/gpt-oss-120b" in model_options else 0, disabled=not model_options)
 
-    st.subheader("Database Schema (for SQL)")
-    schema_input = st.text_area(
-        "Paste your Athena table schema here...", 
-        height=250, 
-        placeholder="CREATE TABLE customers( \nid INT, \nname VARCHAR(255), \nsignup_date DATE \n); ",
-        value=st.session_state.schema_text
-    )
-
-    if st.button("Submit Schema", key="submit_schema"):
-        st.session_state.schema_text = schema_input
-        st.success("Schema submitted and active.", icon="✅")
+    st.subheader("📄 Database Schema")
     
-    if st.session_state.schema_text:
-        st.info("A schema is active. The assistant will now prioritize generating SQL.", icon="ℹ️")
+    tab1, tab2 = st.tabs(["Upload File", "Paste Schema"])
 
+    with tab1:
+        uploaded_file = st.file_uploader(
+            "Upload schema file",
+            type=["txt", "csv", "xlsx"],
+            label_visibility="collapsed"
+        )
+        if uploaded_file is not None:
+            if st.session_state.get("processed_input_id") != uploaded_file.name:
+                process_schema(uploaded_file, is_file=True)
+                st.session_state.processed_input_id = uploaded_file.name
+
+    with tab2:
+        schema_text = st.text_area(
+            "Paste schema here",
+            height=250,
+            label_visibility="collapsed",
+            placeholder="CREATE TABLE customers(...);"
+        )
+        if st.button("Submit Schema"):
+            if schema_text and schema_text.strip():
+                if st.session_state.get("processed_input_id") != schema_text:
+                    process_schema(schema_text, is_file=False)
+                    st.session_state.processed_input_id = schema_text
+            else:
+                st.warning("Please paste some schema text before processing.", icon="⚠️")
 
 # --- Main Chat Interface ---
-logo_path = "Picsart_25-10-05_20-22-13-175.png"
+logo_path = "Picsart_25-10-06_09-13-30-411.png"
 logo_base64 = get_image_as_base64(logo_path)
 if logo_base64:
-    st.markdown(f'<div class="main-title-container"><img src="data:image/jpeg;base64,{logo_base64}" class="logo-img"><h1>Athena & Chat Assistant</h1></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="main-title-container"><img src="data:image/jpeg;base64,{logo_base64}" class="logo-img"><h1>Athena RAG Assistant</h1></div>', unsafe_allow_html=True)
 else:
-    st.title("🤖 Athena & Chat Assistant")
+    st.title("🤖 Athena RAG Assistant")
 
-st.markdown("Ask a general question or provide a schema in the sidebar to generate an Athena SQL query.")
+st.markdown("Provide your database schema in the sidebar to begin generating SQL queries.")
+
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "assistant", "content": "Hello! Please provide your database schema in the sidebar to get started."}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Ask me anything..."):
+if prompt := st.chat_input("Ask a question about your data..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     if not st.session_state.api_key:
         st.error("Please set your GROQ_API_KEY in your environment (.env file or Streamlit secrets).")
-    elif not selected_model:
-        st.error("Model selection is not available. Please check your API key.")
+    elif "rag_handler" not in st.session_state:
+        st.warning("Please provide a schema in the sidebar before asking a question.", icon="⚠️")
     else:
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
+            with st.spinner("Searching schema and thinking..."):
                 try:
-                    response_content = get_intelligent_response(
-                        chat_history=st.session_state.messages,
-                        schema=st.session_state.schema_text,
-                        api_key=st.session_state.api_key,
-                        model=selected_model
+                    # --- UPDATE: Pass the entire message history to the RAG handler ---
+                    response_content = st.session_state.rag_handler.get_rag_response(
+                        question=prompt, 
+                        chat_history=st.session_state.messages
                     )
-
                     st.markdown(response_content)
                     st.session_state.messages.append({"role": "assistant", "content": response_content})
 
